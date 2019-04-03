@@ -1,0 +1,109 @@
+Raspberry Interactive pinout:
+http://pinout.xyz/#
+
+Adafruit 0.56" 4-Digit 7-Segment Display w/I2C Backpack - White
+
+https://www.adafruit.com/products/3109
+
+featherwing pinout
+https://cdn-learn.adafruit.com/downloads/pdf/adafruit-7-segment-led-featherwings.pdf
+
+backpack datasheet:
+https://cdn-shop.adafruit.com/datasheets/ht16K33v110.pdf
+
+why 5V supply of the LED will not harm the raspberry (maximum ratings:3.3V)
+http://blog.oddbit.com/2013/03/12/i2c-on-the-raspberry/
+
+some code help:
+https://github.com/adafruit/Adafruit_Python_LED_Backpack/blob/master/Adafruit_LED_Backpack/HT16K33.py
+
+Kernel documentation I2C
+https://www.kernel.org/doc/Documentation/i2c/
+https://www.kernel.org/doc/Documentation/i2c/dev-interface
+
+Sleep:
+https://www.gnu.org/software/libc/manual/html_node/Sleeping.html
+#include <time.h>
+
+I2C_tool howto:
+http://elinux.org/Interfacing_with_I2C_Devices#i2c-tools
+i2cdetect -r 1
+i2cset [-f] [-y] [-m MASK] I2CBUS CHIP-ADDRESS DATA-ADDRESS [VALUE] ... [MODE]
+i2cset 1 0x70 0x21 0x00 - turn on oscillator
+i2cget 1 0x70 0x21 - turn on oscillator - or this is a "command"?
+i2cset 1 0x70 0x81 0x00 - turn on display?
+i2cget 1 0x70 0x21 - turn on display - or this is a "command"?
+i2cset 1 0x70 0x00 0x3F - should put a 0 to the first character
+i2cset 1 0x70 0x01 0x06 - should put a 1 to the second character
+i2cset 1 0x70 0x03 0x5B - should put a 2 to the third character
+i2cset 1 0x70 0x04 0x4F - should put a 3 to the fourth character
+i2cset 1 0x70 0x02 0x02 - should turn the colon on
+i2cget 1 0x70 0xE3 - should change the dimming
+
+how to calculate sunset and sunrise
+http://users.electromagnetic.net/bu/astro/sunrise-set.php (see excel attached)
+
+Python I2C example:
+http://www.instructables.com/id/Raspberry-Pi-I2C-Python/?ALLSTEPS
+
+How to use the display:
+(ezekhez nem tudom milyen adatot kell beírni, ha kell egyáltalán!)
+  Turn on oscillator: 0x21
+  Turn off oscllator: 0x20
+  Turn on display: 0x81
+  Turn off display: 0x80
+  Set display blinking: 
+    blinking off: 0x80 (display off); 0x81 (display on)
+    blinking 2Hz: 0x82
+    blinking 1Hz: 0x84
+    blinking 0.5Hz: 0x86
+
+Bekapcsolas utan a kovetkezo lepesek szuksegesek:
+- bekapcsolni az oscillatort
+- bekapcsolni a kijelzot
+- minden display RAM cimre be kell irni 0-t
+
+Dimming: 0xE0..0xEF (1/16..16/16)
+
+Display RAM addresses:
+  0x00 to 0x0F - this is the address
+     0 - segment 0
+     2 - segment 1
+     4 - colon
+     6 - segment 2
+     8 - segment 3
+     
+  the data is defined as
+  DIGIT_VALUES = {
+      ' ': 0x00,
+      '-': 0x40,
+      '0': 0x3F,
+      '1': 0x06,
+      '2': 0x5B,
+      '3': 0x4F,
+      '4': 0x66,
+      '5': 0x6D,
+      '6': 0x7D,
+      '7': 0x07,
+      '8': 0x7F,
+      '9': 0x6F,
+      'A': 0x77,
+      'B': 0x7C,
+      'C': 0x39,
+      'D': 0x5E,
+      'E': 0x79,
+      'F': 0x71
+      }
+
+Decimal value of each segment:
+     ----  1
+     I    I
+32   I    I  2
+     I    I
+     ----  64
+     I    I
+16   I    I 4
+     I    I
+     ----  8
+     Value of decimal dot: 128=0x80
+

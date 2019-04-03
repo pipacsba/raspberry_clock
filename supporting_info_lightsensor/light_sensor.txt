@@ -1,0 +1,59 @@
+Fényérzékelo szenzor:
+https://www.rpibolt.hu/termek/tsl2561_digitalis_fenyero__lux__fenyerzekelo_szenzor_i2c_interfesszel.html
+
+https://cdn-shop.adafruit.com/datasheets/TSL2561.pdf
+
+Raspberry Interactive pinout:
+http://pinout.xyz/#
+
+Szenzor wiring:
+https://learn.adafruit.com/tsl2561/wiring-the-tsl2561-sensor
+
+I2C address:
+char sensor_address = 0x39;
+Control Register (0h) : 
+00000011 - on (0x03h)
+00000000 - off (0x00h)
+
+Interrupt Control Register (6h)
+
+0h - interrupt off
+
+REGISTER        ADDRESS        BITS        DESCRIPTION       
+DATA0LOW        Ch            7:0            ADC channel 0 lower byte
+DATA0HIGH       Dh            7:0            ADC channel 0 upper byte
+DATA1LOW        Eh            7:0            ADC channel 1 lower byte
+DATA1HIGH       Fh            7:0            ADC channel 1 upper byte
+NOTE: The ReadWord protocol can be used to read byte-paired registers. For example, the DATA0LOW and DATA0HIGH registers (as well as
+the DATA1LOW and DATA1HIGH registers) may be read together to obtain the 16-bit ADC value in a single transaction
+
+
+//Sensor I2C address
+const unsigned char sensor_address = 0x39;
+//Base Command value
+const unsigned char Sensor_command = 0x80;
+const unsigned char Sensor_Read_Word = 0x20;
+const unsigned char Sensor_Power = 0x0;
+const unsigned char Sensor_Timing = 0x1; // The TIMING register defaults to 02h at power on. - which should be good
+const unsigned char Sensor_interrupt = 0x6;
+//ADC Channel Data Registers (Ch - Fh)
+const unsigned char Broadband_Low = 0xC;
+const unsigned char Broadband_High = 0xD;
+const unsigned char IR_Low = 0xE;
+const unsigned char IR_High = 0xF;
+
+Illuminance (lux) 	Surfaces illuminated by
+0.0001 				Moonless, overcast night sky (starlight)[3]
+0.002 				Moonless clear night sky with airglow[3]
+0.05–0.3 			Full moon on a clear night[4]
+3.4 				Dark limit of civil twilight under a clear sky[5]
+20–50 				Public areas with dark surroundings[6]
+50 					Family living room lights (Australia, 1998)[7]
+80 					Office building hallway/toilet lighting[8][9]
+100 				Very dark overcast day[3]
+150 				Train station platforms[10]
+320–500 			Office lighting[7][11][12][13]
+400 				Sunrise or sunset on a clear day.
+1000 				Overcast day;[3] typical TV studio lighting
+10,000–25,000 		Full daylight (not direct sun)[3]
+32,000–100,000 		Direct sunlight
