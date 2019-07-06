@@ -19,6 +19,9 @@ e.g.:
 	./clock - no output to standard out or to file
 	./clock 0 1 - output to file, but not to standard output
 	./clock 1 - output to standard output, but not to file
+	
+to compile:
+	 gcc -Wall clock.c -lpaho-mqtt3c -lm -li2c -o clock
 */
 //--------------------------------------------------------------------
 
@@ -33,7 +36,10 @@ e.g.:
 #include <termios.h>
 #include <fcntl.h>
 #include <signal.h>
+#include "MQTTClient.h"
+
 #ifndef noI2C
+	#include <sys/ioctl.h>
 	#include <linux/i2c-dev.h>
 	#define I2C_DEV_H_INCLUDED
 #endif
@@ -41,6 +47,14 @@ e.g.:
     #include <I2C_DEV_Fake\i2c-dev_fake.h>
     #define I2C_DEV_H_INCLUDED
 #endif
+
+
+//Defines for MQTT
+#define ADDRESS     "tcp://192.168.17.118:1883"
+#define CLIENTID    "ExampleClientPub"
+#define TOPIC       "clock/light"
+#define QOS         0
+#define TIMEOUT     5000L
 
 //---------------------- END OF INCLUDES AND DEFINES -------------------------------
 
@@ -291,7 +305,7 @@ int main (int argc, char *argv[])
     sigaction(SIGTERM, &action, NULL);
 	sigaction(SIGINT, &action, NULL);
     sigaction(SIGTRAP, &action, NULL);
-
+	
 	// create variables to have terminal messages
 	int verbose = 0;
 	// if the program is started with a number argument above or equal to 1, than turn on terminal messages
@@ -329,6 +343,17 @@ int main (int argc, char *argv[])
 			printf("Light sensor available\n");			
 		}
 	}
+	
+	//set up MQTT
+	char mqtt_payload[50];
+	MQTTClient client;
+	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+	MQTTClient_message pubmsg = MQTTClient_message_initializer;
+	MQTTClient_deliveryToken token;
+
+	MQTTClient_create(&client, ADDRESS, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
+	conn_opts.keepAliveInterval = 70;
+	conn_opts.cleansession = 1;
     
 	// memory allocation for lux based dimming
 	int lux_values[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};  
@@ -386,7 +411,7 @@ int main (int argc, char *argv[])
 	}
 	
 	// continous operation (while(1))
-    // done parameter can be changed by application kill signal
+        // done parameter can be changed by application kill signal
 	while(!done)
 	{
 		// create variable where the time information will be stored [type: time_t]
@@ -452,12 +477,12 @@ int main (int argc, char *argv[])
 			// define current dimming settings
 			if (!((light_sensor_available == 1)  && (use_light_sensor == 1)))
 			{
-                // if light sensor is not availbale or not to be used, based on sunup/sunrise
+                                // if light sensor is not availbale or not to be used, based on sunup/sunrise
 				adimming=update_dimming(a_tm,adimming,thissunup, verbose);
 			}
 			else
 			{
-                // else based on the sensor reading
+                                // else based on the sensor reading
 				adimming=update_dimming_by_lux(lux, lux_values, verbose);
 			}
 			// define memory values for the display
@@ -465,6 +490,21 @@ int main (int argc, char *argv[])
 
 			// Set display content and dimming
 			res= display_update(adisp_refresh_values, display_file_descriptor, verbose);
+			
+			//Do MQTT connect, publish and disconnect
+                        //as the MQTT server can restart, or go off, connection reconnection is done in every minute
+			if (MQTTClient_connect(client, &conn_opts) == MQTTCLIENT_SUCCESS && (light_sensor_available == 1))
+			{	
+				snprintf(mqtt_payload,50,"{\"lux\": %f, \"dimming\": %i}", lux, adimming.currlight);
+				pubmsg.payload = mqtt_payload;
+				pubmsg.payloadlen = strlen(mqtt_payload);
+				pubmsg.qos = QOS;
+				pubmsg.retained = 1;
+				MQTTClient_publishMessage(client, TOPIC, &pubmsg, &token);
+				MQTTClient_waitForCompletion(client, token, 5000);
+				MQTTClient_disconnect(client, 10000);				
+			}
+			
 			if ((res < 0) && verbose)
 			{
 				printf("DISPLAY UPDATE FIALED\n");
@@ -477,10 +517,11 @@ int main (int argc, char *argv[])
 				printf("display dimming is set to %d, display memory to set: %#.2x, result: %d \n", adimming.currlight, adisp_refresh_values.disp_dim,res);
 			}
 
-			// sleep for 55 second using nanosleep() if this cycle is not the first run (randomly starting between 0..59 sec in a minute)
+			// sleep for 50 second using nanosleep() if this cycle is not the first run (randomly starting between 0..59 sec in a minute)
+                        // changed from 55 to 50, as 5sec wait time came in for MQTT server
 			if (dontwait == 0)
 			{
-				program_sleep(55,verbose);
+				program_sleep(50,verbose);
 				// measure lux value after the long wait if communication with the sensor is OK
 				if (light_sensor_available == 1)
 				{
@@ -517,8 +558,8 @@ int main (int argc, char *argv[])
 				dontwait = 0;
 			}
 		}
-        
-        // exit on key-press, only works if verbose > 1
+
+                // exit on key-press, only works if verbose > 1
 		if (verbose && is_key_pressed())
 		{
 			key = getkey();
@@ -534,12 +575,14 @@ int main (int argc, char *argv[])
 	{
 		printf("DISPLAY SHUTDOWN FAILED\n");
 	}
-	// Turn off snesor
+	// Turn off sensor
 	res = sensor_init(0, sensor_file_descriptor, verbose);
 	if ((res < 0) && verbose)
 	{
 		printf("SENSOR SHUTDOWN FAILED\n");
 	}
+	//Destroy MQTT
+	MQTTClient_destroy(&client);
 	return 0;
 }
 
@@ -905,16 +948,16 @@ output								: including the current dimming settings (with memory)
 struct display_dimming update_dimming_by_lux(int lux, int * lux_array, int verbose)
 {
 	int adimming = 0;
-    // for each possible dimming value (starting from the lowest)
+        // for each possible dimming value (starting from the lowest)
 	for (int i = 0; i <= MaxDimming; i++)
 	{
-        // if the current element of the lux_array is greater than the current lux
-        // and this value is not 0 in the vector
+                // if the current element of the lux_array is greater than the current lux
+                // and this value is not 0 in the vector
 		if ((lux > lux_array[i]) && (lux_array[i] > 0))
 		{
-            // than this is the required dimming value
-            // at the end the highest dimming is selected which fulfills the criteria above
-			adimming = i;
+                    // than this is the required dimming value
+                    // at the end the highest dimming is selected which fulfills the criteria above
+		    adimming = i;
 		}
 	}
 	if (verbose)
@@ -928,7 +971,7 @@ struct display_dimming update_dimming_by_lux(int lux, int * lux_array, int verbo
 	//		bdimming.dimming_max=15;
 	//		bdimming.dimming_min=0; */
 	struct display_dimming bdimming={0, 0, MaxDimming, 0};
-    // set the dimming value as found above
+        // set the dimming value as found above
 	bdimming.currlight = adimming;
 	return bdimming;
 }
@@ -957,47 +1000,47 @@ unsigned char get_hex_code(int anum)
 	switch (anum)
 	{
 		case 0:
-            // 63 = 0x3F
+                        // 63 = 0x3F
 			return 0x3F;
 			break;
 		case 1:
-            // 6 = 0x06
+                        // 6 = 0x06
 			return 0x06;
 			break;
 		case 2:
-            // 91 = 0x5B
+                        // 91 = 0x5B
 			return 0x5B;
 			break;
 		case 3:
-            // 79 = 0x4F
+                        // 79 = 0x4F
 			return 0x4F;
 			break;
 		case 4:
-            // 102 = 0x66
+                        // 102 = 0x66
 			return 0x66;
 			break;
 		case 5:
-            // 109 = 0x6D
+                        // 109 = 0x6D
 			return 0x6D;
 			break;
 		case 6:
-            // 125 = 0x7D
+                        // 125 = 0x7D
 			return 0x7D;
 			break;
 		case 7:
-            // 7 = 0x07
+                        // 7 = 0x07
 			return 0x07;
 			break;
 		case 8:
-            // 127 = 0x7F
+                        // 127 = 0x7F
 			return 0x7F;
 			break;
 		case 9:
-            // 111 = 0x6F
+                        // 111 = 0x6F
 			return 0x6F;
 			break;
 		default:
-            // nothin' = 0x00
+                        // nothin' = 0x00
 			return 0x00;
 			break;
 	}
@@ -1137,10 +1180,10 @@ void program_sleep(float sec, int verbose)
 {
 	// create nanosleep structure
 	struct timespec ts;
-    // convert input to nanosleep structure
+        // convert input to nanosleep structure
 	ts.tv_sec = (int)sec;
 	ts.tv_nsec = (sec-(int)sec)*1000000000;
-    // perform the sleep
+        // perform the sleep
 	nanosleep(&ts, NULL);
 	if (verbose == 1)
 	{
@@ -1162,9 +1205,9 @@ float measure_lux(int file, int verbose)
 	float lux = 0.0;
 	int broadband = 0;
 	int ir = 0;
-    // set the gain value of the sensor if needed
+        // set the gain value of the sensor if needed
 	int gain = 1;
-    // set the command values for the read
+        // set the command values for the read
 	int command_broadband = Sensor_command + Sensor_Read_Word + Broadband_Low;
 	int command_ir = Sensor_command + Sensor_Read_Word + IR_Low;
 	
@@ -1173,14 +1216,14 @@ float measure_lux(int file, int verbose)
 	{
 		command_gain = Sensor_command + Sensor_Timing;
 		#ifdef I2C_DEV_H_INCLUDED
-            res = i2c_smbus_write_byte_data(file, command_gain, 0x12);
-            if (res < 0)
-            {
-                // ERROR HANDLING: i2c transaction failed
-                lux=res;
-            }
-            // wait for finish one measurement integration in the sensor (datasheet)
-            program_sleep(0.402, verbose);
+		res = i2c_smbus_write_byte_data(file, command_gain, 0x12);
+		if (res < 0)
+		{
+			// ERROR HANDLING: i2c transaction failed
+			lux=res;
+		}
+                // wait for finish one measurement integration in the sensor (datasheet)
+                program_sleep(0.402, verbose);
 		#endif
 	}
 		
@@ -1203,18 +1246,18 @@ float measure_lux(int file, int verbose)
 			// ERROR HANDLING: i2c transaction failed
 			lux=res;
 		}
-	#endif
-    // if lux is not 0, than something failed during the measurement
+	#endif	
+        // if lux is not 0, than something failed during the measurement
 	if (lux == 0)
 	{
         // if gain is not 16, that means gain = 1
 		if (gain != 16) 
 		{
-            // make conversion based on datasheet
+                        // make conversion based on datasheet
 			broadband= broadband << 4;
 			ir = ir << 4;
 		}
-        // calculate lux from measured values
+                // calculate lux from measured values
 		lux = calculate_lux(broadband, ir);
 	}
 	
@@ -1239,35 +1282,35 @@ float calculate_lux(int broadband, int ir)
 	// For CH1/CH0 > 1.30 Lux = 0
 	float lux = 0.0;
 	unsigned long ratio = 0;
-    // calculate ration with division of zero protection
+        // calculate ration with division of zero protection
 	if (broadband > 0) ratio = ir / broadband;
-    // make the necessary calculations based on the database
-    // For 0 < CH1/CH0 <= 0.52 Lux = 0.0315 * CH0 - 0.0593 / CH0 * ((CH1/CH0)1.4)
+        // make the necessary calculations based on the database
+        // For 0 < CH1/CH0 <= 0.52 Lux = 0.0315 * CH0 - 0.0593 / CH0 * ((CH1/CH0)1.4)
 	if (ratio <= 0.52)
 	{
 		lux = 0.0315 * broadband - 0.0593 / broadband * (pow(ratio,1.4));
 	}
-    // For 0.52 < CH1/CH0 <= 0.65 Lux = 0.0229 * CH0 - 0.0291 * CH1
+        // For 0.52 < CH1/CH0 <= 0.65 Lux = 0.0229 * CH0 - 0.0291 * CH1
 	else if (ratio <= 0.65)
 	{
 		lux = 0.0229 * broadband - 0.0291 * ir;
 	}
-    // For 0.65 < CH1/CH0 <= 0.80 Lux = 0.0157 * CH0 - 0.0180 * CH1
+        // For 0.65 < CH1/CH0 <= 0.80 Lux = 0.0157 * CH0 - 0.0180 * CH1
 	else if (ratio <= 0.8)
 	{
 		lux = 0.0157 * broadband - 0.0180 * ir;
 	}
-    // For 0.80 < CH1/CH0 <= 1.30 Lux = 0.00338 * CH0 - 0.00260 * CH1
+        // For 0.80 < CH1/CH0 <= 1.30 Lux = 0.00338 * CH0 - 0.00260 * CH1
 	else if  (ratio <= 1.3)
 	{
 		lux = 0.00338 * broadband - 0.00260 * ir;
 	}
-    // For CH1/CH0 > 1.30 Lux = 0
+        // For CH1/CH0 > 1.30 Lux = 0
 	else
 	{
 		lux = 0;
 	}
-    // if a calculation wnet out of limits, than set the lux value to 0
+        // if a calculation wnet out of limits, than set the lux value to 0
 	if (isnan(lux))
 	{
 		lux = 0;
@@ -1284,7 +1327,7 @@ sub-function is created to read lux values for dimming from file
 */
 void read_lux_values(int * lux_array)
 {
-    // reset all values to 0
+        // reset all values to 0
 	for (int i = 0; i <= MaxDimming; i++)
 	{
 		lux_array[i] = 0;
@@ -1297,9 +1340,9 @@ void read_lux_values(int * lux_array)
 	}
 	else
 	{
-        // or other suitable maximum line size
+                // or other suitable maximum line size
 		char line [ 128 ]; 
-        // read a line
+                // read a line
 		while ( fgets ( line, sizeof line, f ) != NULL ) 
 		{
 			char *token;
@@ -1308,11 +1351,11 @@ void read_lux_values(int * lux_array)
 			int alux = atoi(token);
 			// Token will point to the part after the " ".
 			token = strtok(NULL, " ");
-            // convert token to number
+                        // convert token to number
 			int adimming = atoi(token);
 			lux_array[adimming] = alux;
 		}
-        // close file
+                // close file
 		fclose(f);
 	}
 	
