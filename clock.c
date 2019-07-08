@@ -293,6 +293,8 @@ const char lux_file[] = "lux_dimming.txt";
 volatile sig_atomic_t done = 0;
 // variable to handle display light measure status
 volatile int display_light_meas = -1;
+// variable to store argv[0] without passing it
+char lux_path[50];
 //---------------------END OF GLOBAL VARIABLES--------------------------
 
 
@@ -305,6 +307,9 @@ int main (int argc, char *argv[])
     sigaction(SIGTERM, &action, NULL);
 	sigaction(SIGINT, &action, NULL);
     sigaction(SIGTRAP, &action, NULL);
+	
+	//allocate lux_path to calling command
+	snprintf(lux_path,50, "%s",argv[0]);
 	
 	// create variables to have terminal messages
 	int verbose = 0;
@@ -1327,11 +1332,24 @@ sub-function is created to read lux values for dimming from file
 */
 void read_lux_values(int * lux_array)
 {
-        // reset all values to 0
+	//define variable to store file location
+	char filepath[50];
+	
+    // reset all values to 0
 	for (int i = 0; i <= MaxDimming; i++)
 	{
 		lux_array[i] = 0;
 	}
+	
+	//Get executable location from argv[0] (see main function), and append with lux_file
+	char *s = strrchr(lux_path, '/');
+	if (s) {
+		*s = '\0';
+	}
+	snprintf(filepath,50,"%s", lux_path);
+	snprintf(filepath,50,"%s\\%s", lux_path, lux_file);
+
+	
 	// open file to append ("a")
 	FILE *f = fopen(lux_file, "r");
 	if (f == NULL)
