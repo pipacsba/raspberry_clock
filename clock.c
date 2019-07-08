@@ -530,7 +530,8 @@ int main (int argc, char *argv[])
 				// measure lux value after the long wait if communication with the sensor is OK
 				if (light_sensor_available == 1)
 				{
-					lux = measure_lux(sensor_file_descriptor, verbose);
+					//some low-pass filtering on lux value ~4min (y += alpha * ( x - y ) )
+					lux = lux + (measure_lux(sensor_file_descriptor, verbose) - lux)/4;
 					// if communication is not OK, disable usage of sensor
 					if (lux < 0)
 					{
