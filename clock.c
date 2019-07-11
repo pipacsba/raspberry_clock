@@ -1341,6 +1341,7 @@ void read_lux_values(int * lux_array)
 	{
 		lux_array[i] = 0;
 	}
+	// printf("%s\n", lux_path);
 	
 	//Get executable location from argv[0] (see main function), and append with lux_file
 	char *s = strrchr(lux_path, '/');
@@ -1348,11 +1349,12 @@ void read_lux_values(int * lux_array)
 		*s = '\0';
 	}
 	snprintf(filepath,50,"%s", lux_path);
-	snprintf(filepath,50,"%s\\%s", lux_path, lux_file);
+	snprintf(filepath,50,"%s/%s", lux_path, lux_file);
 
+	printf("%s\n", filepath);
 	
 	// open file to append ("a")
-	FILE *f = fopen(lux_file, "r");
+	FILE *f = fopen(filepath, "r");
 	if (f == NULL)
 	{
 		printf("Lux-dimming file open failed\n");
