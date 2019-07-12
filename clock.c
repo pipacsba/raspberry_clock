@@ -22,6 +22,10 @@ e.g.:
 	
 to compile:
 	 gcc -Wall clock.c -lpaho-mqtt3c -lm -li2c -o clock
+	 
+for cygwin:
+	gcc -c  clock.c -g -O3 -D noI2C -DNDEBUG  -o .//clock.c.o -I. -I.
+	gcc -o clock @"RaspberryPI_clock.txt" -L. -LC:\\cygwin64\\usr\\local\\lib  -lpaho-mqtt3c
 */
 //--------------------------------------------------------------------
 
@@ -44,8 +48,8 @@ to compile:
 	#define I2C_DEV_H_INCLUDED
 #endif
 #ifdef noI2C
-    #include <I2C_DEV_Fake\i2c-dev_fake.h>
-    #define I2C_DEV_H_INCLUDED
+	#include <I2C_DEV_Fake\i2c-dev_fake.h>
+	#define I2C_DEV_H_INCLUDED
 #endif
 
 
@@ -137,7 +141,7 @@ sub-function is created to read lux values for dimming from file
 		the file shall contain lux dimming pairs in each row, both as integer values
 	input: pointer to the array to be filled
 */
-void read_lux_values(int * lux_array);
+void read_lux_values(int * lux_array, char * filepath);
 
 /* FUNCTION: GET_DISPL_VALUES
 sub-function to update the display content
@@ -154,7 +158,7 @@ struct disp_refresh_values get_displ_values(struct tm *a_tm,unsigned char currli
 this function send the defined values to the display device via the I2C bus
  inputs:
 	adisp_refresh_values	:	contains the register values of the display segments
-	verbose					:   if 1 some information will be sent to the standard output
+	verbose					:	if 1 some information will be sent to the standard output
 */
 int display_update(struct disp_refresh_values adisp_refresh_values, int file, int verbose);
 
@@ -294,7 +298,7 @@ volatile sig_atomic_t done = 0;
 // variable to handle display light measure status
 volatile int display_light_meas = -1;
 // variable to store argv[0] without passing it
-char lux_path[50];
+
 //---------------------END OF GLOBAL VARIABLES--------------------------
 
 
@@ -302,14 +306,23 @@ int main (int argc, char *argv[])
 {
 	// prepare function to be killed properly
 	struct sigaction action;
-    memset(&action, 0, sizeof(struct sigaction));
-    action.sa_handler = term;
-    sigaction(SIGTERM, &action, NULL);
+	memset(&action, 0, sizeof(struct sigaction));
+	action.sa_handler = term;
+	sigaction(SIGTERM, &action, NULL);
 	sigaction(SIGINT, &action, NULL);
-    sigaction(SIGTRAP, &action, NULL);
+	sigaction(SIGTRAP, &action, NULL);
 	
 	//allocate lux_path to calling command
+	char lux_path[50];
+	char filepath[50];
 	snprintf(lux_path,50, "%s",argv[0]);
+	//Get executable location from argv[0] (see main function), and append with lux_file
+	char *s = strrchr(lux_path, '/');
+	if (s) {
+		*s = '\0';
+	}
+	//snprintf(filepath,50,"%s", lux_path);
+	snprintf(filepath,50,"%s/%s", lux_path, lux_file);
 	
 	// create variables to have terminal messages
 	int verbose = 0;
@@ -359,11 +372,11 @@ int main (int argc, char *argv[])
 	MQTTClient_create(&client, ADDRESS, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
 	conn_opts.keepAliveInterval = 70;
 	conn_opts.cleansession = 1;
-    
+	
 	// memory allocation for lux based dimming
 	int lux_values[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};  
-    // is the lux value set up?
-	int lux_read = 0;  
+	// is the lux value set up?
+	int lux_read = 0;
 
 	// The location coordinates (Budapest) as double
 	double Ln_deg    = 47.5;
@@ -377,8 +390,8 @@ int main (int argc, char *argv[])
 	//		adimming.currlight=0;
 	//		adimming.dimming_max=15;
 	//		adimming.dimming_min=0;
-    // used for sun-set based calculation
-	struct display_dimming adimming={0, 0, MaxDimming, 0};  
+	// used for sun-set based calculation
+	struct display_dimming adimming={0, 0, MaxDimming, 0};
 
 	// create structure variable for display refresh values
 	struct disp_refresh_values adisp_refresh_values;
@@ -416,7 +429,7 @@ int main (int argc, char *argv[])
 	}
 	
 	// continous operation (while(1))
-        // done parameter can be changed by application kill signal
+	// done parameter can be changed by application kill signal
 	while(!done)
 	{
 		// create variable where the time information will be stored [type: time_t]
@@ -425,7 +438,7 @@ int main (int argc, char *argv[])
 		a_tm = localtime(&now);
 
 		// if it is 4 o'clock in the morning, or the sunset is not yet calculated, than let's calculate it
-		if (!((light_sensor_available == 1)  && (use_light_sensor == 1)))
+		if (!((light_sensor_available == 1) && (use_light_sensor == 1)))
 		{
 			if (((a_tm->tm_hour == 4) && (a_tm->tm_min == 0))||(thissunup.set_hour == -1))
 			{
@@ -443,7 +456,7 @@ int main (int argc, char *argv[])
 				{
 					// if the current time is smaller or equal than the sun-rise time, or higher than the sun-set time, than
 					if (((a_tm->tm_hour*100+a_tm->tm_min) <= (thissunup.rise_hour*100+ thissunup.rise_min)) ||
-					    ((a_tm->tm_hour*100+a_tm->tm_min) > (thissunup.set_hour*100+ thissunup.set_min)))
+						((a_tm->tm_hour*100+a_tm->tm_min) > (thissunup.set_hour*100+ thissunup.set_min)))
 					{
 						// set the display light to minimum
 						adimming.currlight=adimming.dimming_min;
@@ -460,9 +473,10 @@ int main (int argc, char *argv[])
 		{
 			if (((a_tm->tm_hour == 4) && (a_tm->tm_min == 0)) || (lux_read == 0))
 			{
-				read_lux_values(lux_values);
+				read_lux_values(lux_values, filepath);
 				if (verbose)
 				{
+					printf("Lux file read: %s\n", filepath);
 					printf("The lux values are: ");
 					for(int i = 0; i <= MaxDimming; i++) {
 						printf("%d ", lux_values[i]);
@@ -480,14 +494,14 @@ int main (int argc, char *argv[])
 			amin=a_tm->tm_min;
 
 			// define current dimming settings
-			if (!((light_sensor_available == 1)  && (use_light_sensor == 1)))
+			if (!((light_sensor_available == 1) && (use_light_sensor == 1)))
 			{
-                                // if light sensor is not availbale or not to be used, based on sunup/sunrise
+				// if light sensor is not availbale or not to be used, based on sunup/sunrise
 				adimming=update_dimming(a_tm,adimming,thissunup, verbose);
 			}
 			else
 			{
-                                // else based on the sensor reading
+				// else based on the sensor reading
 				adimming=update_dimming_by_lux(lux, lux_values, verbose);
 			}
 			// define memory values for the display
@@ -497,7 +511,7 @@ int main (int argc, char *argv[])
 			res= display_update(adisp_refresh_values, display_file_descriptor, verbose);
 			
 			//Do MQTT connect, publish and disconnect
-                        //as the MQTT server can restart, or go off, connection reconnection is done in every minute
+			//as the MQTT server can restart, or go off, connection reconnection is done in every minute
 			if (MQTTClient_connect(client, &conn_opts) == MQTTCLIENT_SUCCESS && (light_sensor_available == 1))
 			{	
 				snprintf(mqtt_payload,50,"{\"lux\": %f, \"dimming\": %i}", lux, adimming.currlight);
@@ -523,7 +537,7 @@ int main (int argc, char *argv[])
 			}
 
 			// sleep for 50 second using nanosleep() if this cycle is not the first run (randomly starting between 0..59 sec in a minute)
-                        // changed from 55 to 50, as 5sec wait time came in for MQTT server
+			// changed from 55 to 50, as 5sec wait time came in for MQTT server
 			if (dontwait == 0)
 			{
 				program_sleep(50,verbose);
@@ -565,7 +579,7 @@ int main (int argc, char *argv[])
 			}
 		}
 
-                // exit on key-press, only works if verbose > 1
+		// exit on key-press, only works if verbose > 1
 		if (verbose && is_key_pressed())
 		{
 			key = getkey();
@@ -610,10 +624,10 @@ int openI2C_bus(int adapter_nr,unsigned char address, int verbose)
 
 		snprintf(filename, 19, "/dev/i2c-%d", adapter_nr);
 		file = open(filename, O_RDWR);
-        // if fake I2C header is used, than file opening will fail
-        #ifdef I2C_INC_FAKE
-            file = 1;
-        #endif
+		// if fake I2C header is used, than file opening will fail
+		#ifdef I2C_INC_FAKE
+			file = 1;
+		#endif
 		if (file < 0)
 		{
 			// ERROR HANDLING; you can check errno to see what went wrong
@@ -648,11 +662,11 @@ int sensor_init(unsigned char onoff, int file, int verbose)
 	int res=0;
 	int ares=0;
 	unsigned char command = Sensor_command;
-    // Power off value
+	// Power off value
 	unsigned char power_command = 0x00; 
 	if (onoff)
 	{
-        // Power on value
+		// Power on value
 		power_command = 0x03; 
 	}
 
@@ -667,7 +681,7 @@ int sensor_init(unsigned char onoff, int file, int verbose)
 			ares=res;
 		}
 	#endif
-        
+
 	if (verbose == 1)
 	{
 		printf("Light sensor control register is set to %d, with result %d \n", power_command, res);
@@ -776,7 +790,7 @@ struct disp_refresh_values get_displ_values(struct tm *a_tm, unsigned char currl
 	adisp_refresh_values.disp_min1 = get_hex_code(a_tm->tm_min/10);
 	adisp_refresh_values.disp_min2 = get_hex_code(a_tm->tm_min%10);
 	// get display hex code for dimming
-	adisp_refresh_values.disp_dim  = 0xE0+ currlight;
+	adisp_refresh_values.disp_dim = 0xE0+ currlight;
 
 	if (display_light_meas >= 0)
 	{
@@ -785,7 +799,7 @@ struct disp_refresh_values get_displ_values(struct tm *a_tm, unsigned char currl
 		adisp_refresh_values.disp_h2 = 0x0F;
 		adisp_refresh_values.disp_min1 = 0x0F;
 		adisp_refresh_values.disp_min2 = 0x0F;
-		adisp_refresh_values.disp_dim  = 0xE0+ display_light_meas;
+		adisp_refresh_values.disp_dim = 0xE0+ display_light_meas;
 		// if verbose, behave so
 		if (verbose)
 		{
@@ -954,16 +968,16 @@ output								: including the current dimming settings (with memory)
 struct display_dimming update_dimming_by_lux(int lux, int * lux_array, int verbose)
 {
 	int adimming = 0;
-        // for each possible dimming value (starting from the lowest)
+	// for each possible dimming value (starting from the lowest)
 	for (int i = 0; i <= MaxDimming; i++)
 	{
-                // if the current element of the lux_array is greater than the current lux
-                // and this value is not 0 in the vector
+		// if the current element of the lux_array is greater than the current lux
+		// and this value is not 0 in the vector
 		if ((lux > lux_array[i]) && (lux_array[i] > 0))
 		{
-                    // than this is the required dimming value
-                    // at the end the highest dimming is selected which fulfills the criteria above
-		    adimming = i;
+			// than this is the required dimming value
+			// at the end the highest dimming is selected which fulfills the criteria above
+			adimming = i;
 		}
 	}
 	if (verbose)
@@ -977,7 +991,7 @@ struct display_dimming update_dimming_by_lux(int lux, int * lux_array, int verbo
 	//		bdimming.dimming_max=15;
 	//		bdimming.dimming_min=0; */
 	struct display_dimming bdimming={0, 0, MaxDimming, 0};
-        // set the dimming value as found above
+	// set the dimming value as found above
 	bdimming.currlight = adimming;
 	return bdimming;
 }
@@ -1006,47 +1020,47 @@ unsigned char get_hex_code(int anum)
 	switch (anum)
 	{
 		case 0:
-                        // 63 = 0x3F
+			// 63 = 0x3F
 			return 0x3F;
 			break;
 		case 1:
-                        // 6 = 0x06
+			// 6 = 0x06
 			return 0x06;
 			break;
 		case 2:
-                        // 91 = 0x5B
+			// 91 = 0x5B
 			return 0x5B;
 			break;
 		case 3:
-                        // 79 = 0x4F
+			// 79 = 0x4F
 			return 0x4F;
 			break;
 		case 4:
-                        // 102 = 0x66
+			// 102 = 0x66
 			return 0x66;
 			break;
 		case 5:
-                        // 109 = 0x6D
+			// 109 = 0x6D
 			return 0x6D;
 			break;
 		case 6:
-                        // 125 = 0x7D
+			// 125 = 0x7D
 			return 0x7D;
 			break;
 		case 7:
-                        // 7 = 0x07
+			// 7 = 0x07
 			return 0x07;
 			break;
 		case 8:
-                        // 127 = 0x7F
+			// 127 = 0x7F
 			return 0x7F;
 			break;
 		case 9:
-                        // 111 = 0x6F
+			// 111 = 0x6F
 			return 0x6F;
 			break;
 		default:
-                        // nothin' = 0x00
+			// nothin' = 0x00
 			return 0x00;
 			break;
 	}
@@ -1186,10 +1200,10 @@ void program_sleep(float sec, int verbose)
 {
 	// create nanosleep structure
 	struct timespec ts;
-        // convert input to nanosleep structure
+	// convert input to nanosleep structure
 	ts.tv_sec = (int)sec;
 	ts.tv_nsec = (sec-(int)sec)*1000000000;
-        // perform the sleep
+	// perform the sleep
 	nanosleep(&ts, NULL);
 	if (verbose == 1)
 	{
@@ -1211,9 +1225,9 @@ float measure_lux(int file, int verbose)
 	float lux = 0.0;
 	int broadband = 0;
 	int ir = 0;
-        // set the gain value of the sensor if needed
+	// set the gain value of the sensor if needed
 	int gain = 1;
-        // set the command values for the read
+	// set the command values for the read
 	int command_broadband = Sensor_command + Sensor_Read_Word + Broadband_Low;
 	int command_ir = Sensor_command + Sensor_Read_Word + IR_Low;
 	
@@ -1228,8 +1242,8 @@ float measure_lux(int file, int verbose)
 			// ERROR HANDLING: i2c transaction failed
 			lux=res;
 		}
-                // wait for finish one measurement integration in the sensor (datasheet)
-                program_sleep(0.402, verbose);
+		// wait for finish one measurement integration in the sensor (datasheet)
+		program_sleep(0.402, verbose);
 		#endif
 	}
 		
@@ -1253,17 +1267,17 @@ float measure_lux(int file, int verbose)
 			lux=res;
 		}
 	#endif	
-        // if lux is not 0, than something failed during the measurement
+	// if lux is not 0, than something failed during the measurement
 	if (lux == 0)
 	{
-        // if gain is not 16, that means gain = 1
+		// if gain is not 16, that means gain = 1
 		if (gain != 16) 
 		{
-                        // make conversion based on datasheet
+			// make conversion based on datasheet
 			broadband= broadband << 4;
 			ir = ir << 4;
 		}
-                // calculate lux from measured values
+		// calculate lux from measured values
 		lux = calculate_lux(broadband, ir);
 	}
 	
@@ -1288,35 +1302,35 @@ float calculate_lux(int broadband, int ir)
 	// For CH1/CH0 > 1.30 Lux = 0
 	float lux = 0.0;
 	unsigned long ratio = 0;
-        // calculate ration with division of zero protection
+	// calculate ration with division of zero protection
 	if (broadband > 0) ratio = ir / broadband;
-        // make the necessary calculations based on the database
-        // For 0 < CH1/CH0 <= 0.52 Lux = 0.0315 * CH0 - 0.0593 / CH0 * ((CH1/CH0)1.4)
+	// make the necessary calculations based on the database
+	// For 0 < CH1/CH0 <= 0.52 Lux = 0.0315 * CH0 - 0.0593 / CH0 * ((CH1/CH0)1.4)
 	if (ratio <= 0.52)
 	{
 		lux = 0.0315 * broadband - 0.0593 / broadband * (pow(ratio,1.4));
 	}
-        // For 0.52 < CH1/CH0 <= 0.65 Lux = 0.0229 * CH0 - 0.0291 * CH1
+	// For 0.52 < CH1/CH0 <= 0.65 Lux = 0.0229 * CH0 - 0.0291 * CH1
 	else if (ratio <= 0.65)
 	{
 		lux = 0.0229 * broadband - 0.0291 * ir;
 	}
-        // For 0.65 < CH1/CH0 <= 0.80 Lux = 0.0157 * CH0 - 0.0180 * CH1
+	// For 0.65 < CH1/CH0 <= 0.80 Lux = 0.0157 * CH0 - 0.0180 * CH1
 	else if (ratio <= 0.8)
 	{
 		lux = 0.0157 * broadband - 0.0180 * ir;
 	}
-        // For 0.80 < CH1/CH0 <= 1.30 Lux = 0.00338 * CH0 - 0.00260 * CH1
+	// For 0.80 < CH1/CH0 <= 1.30 Lux = 0.00338 * CH0 - 0.00260 * CH1
 	else if  (ratio <= 1.3)
 	{
 		lux = 0.00338 * broadband - 0.00260 * ir;
 	}
-        // For CH1/CH0 > 1.30 Lux = 0
+	// For CH1/CH0 > 1.30 Lux = 0
 	else
 	{
 		lux = 0;
 	}
-        // if a calculation wnet out of limits, than set the lux value to 0
+	// if a calculation wnet out of limits, than set the lux value to 0
 	if (isnan(lux))
 	{
 		lux = 0;
@@ -1331,28 +1345,14 @@ sub-function is created to read lux values for dimming from file
 		the file shall contain lux dimming pairs in each row, both as integer values
 	input: pointer to the array to be filled
 */
-void read_lux_values(int * lux_array)
+void read_lux_values(int * lux_array, char * filepath)
 {
-	//define variable to store file location
-	char filepath[50];
-	
     // reset all values to 0
 	for (int i = 0; i <= MaxDimming; i++)
 	{
 		lux_array[i] = 0;
 	}
-	// printf("%s\n", lux_path);
-	
-	//Get executable location from argv[0] (see main function), and append with lux_file
-	char *s = strrchr(lux_path, '/');
-	if (s) {
-		*s = '\0';
-	}
-	snprintf(filepath,50,"%s", lux_path);
-	snprintf(filepath,50,"%s/%s", lux_path, lux_file);
 
-	printf("%s\n", filepath);
-	
 	// open file to append ("a")
 	FILE *f = fopen(filepath, "r");
 	if (f == NULL)
@@ -1361,9 +1361,9 @@ void read_lux_values(int * lux_array)
 	}
 	else
 	{
-                // or other suitable maximum line size
+		// or other suitable maximum line size
 		char line [ 128 ]; 
-                // read a line
+		// read a line
 		while ( fgets ( line, sizeof line, f ) != NULL ) 
 		{
 			char *token;
@@ -1372,11 +1372,11 @@ void read_lux_values(int * lux_array)
 			int alux = atoi(token);
 			// Token will point to the part after the " ".
 			token = strtok(NULL, " ");
-                        // convert token to number
+			// convert token to number
 			int adimming = atoi(token);
 			lux_array[adimming] = alux;
 		}
-                // close file
+		// close file
 		fclose(f);
 	}
 	
@@ -1386,26 +1386,26 @@ void read_lux_values(int * lux_array)
 /* stuff to detect key press */
 int getkey()
 {
-    int character;
-    struct termios orig_term_attr;
-    struct termios new_term_attr;
+	int character;
+	struct termios orig_term_attr;
+	struct termios new_term_attr;
 
-    // Set the terminal to raw mode
-    tcgetattr(fileno(stdin), &orig_term_attr);
-    memcpy(&new_term_attr, &orig_term_attr, sizeof(struct termios));
-    new_term_attr.c_lflag &= ~(ECHO|ICANON);
-    new_term_attr.c_cc[VTIME] = 0;
-    new_term_attr.c_cc[VMIN] = 0;
-    tcsetattr(fileno(stdin), TCSANOW, &new_term_attr);
+	// Set the terminal to raw mode
+	tcgetattr(fileno(stdin), &orig_term_attr);
+	memcpy(&new_term_attr, &orig_term_attr, sizeof(struct termios));
+	new_term_attr.c_lflag &= ~(ECHO|ICANON);
+	new_term_attr.c_cc[VTIME] = 0;
+	new_term_attr.c_cc[VMIN] = 0;
+	tcsetattr(fileno(stdin), TCSANOW, &new_term_attr);
 
-    // read a character from the stdin stream without blocking
-    //  returns EOF (-1) if no character is available
-    character = fgetc(stdin);
+	// read a character from the stdin stream without blocking
+	//  returns EOF (-1) if no character is available
+	character = fgetc(stdin);
 
-    // Restore the original terminal attributes
-    tcsetattr(fileno(stdin), TCSANOW, &orig_term_attr);
+	// Restore the original terminal attributes
+	tcsetattr(fileno(stdin), TCSANOW, &orig_term_attr);
 
-    return character;
+	return character;
 }
 
 /* stuff to avoid the program from waiting for key press */
