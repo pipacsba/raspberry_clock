@@ -54,7 +54,8 @@ for cygwin:
 
 
 //Defines for MQTT
-#define ADDRESS     "tcp://192.168.17.118:1883"
+//#define ADDRESS     "tcp://192.168.17.118:1883"
+#define ADDRESS     "tcp://10.58.193.203:1883"
 #define CLIENTID    "ExampleClientPub"
 #define TOPIC       "clock/light"
 #define QOS         0
@@ -364,6 +365,7 @@ int main (int argc, char *argv[])
 	
 	//set up MQTT
 	char mqtt_payload[50];
+	int MQTT_Connected = 0;
 	MQTTClient client;
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
 	MQTTClient_message pubmsg = MQTTClient_message_initializer;
@@ -404,6 +406,7 @@ int main (int argc, char *argv[])
 
 	// create a variable to show if this is the first entering to minute change "if", and to show that in this case there is no need for a 55sec wait afterwards
 	int dontwait=1;
+	int sleep_sec = 50;
 
 	// define variable for I2C bus read/wrtie event results
 	int res=0;
@@ -509,38 +512,69 @@ int main (int argc, char *argv[])
 
 			// Set display content and dimming
 			res= display_update(adisp_refresh_values, display_file_descriptor, verbose);
-			
-			//Do MQTT connect, publish and disconnect
-			//as the MQTT server can restart, or go off, connection reconnection is done in every minute
-			if (MQTTClient_connect(client, &conn_opts) == MQTTCLIENT_SUCCESS && (light_sensor_available == 1))
-			{	
-				snprintf(mqtt_payload,50,"{\"lux\": %f, \"dimming\": %i}", lux, adimming.currlight);
-				pubmsg.payload = mqtt_payload;
-				pubmsg.payloadlen = strlen(mqtt_payload);
-				pubmsg.qos = QOS;
-				pubmsg.retained = 1;
-				MQTTClient_publishMessage(client, TOPIC, &pubmsg, &token);
-				MQTTClient_waitForCompletion(client, token, 5000);
-				MQTTClient_disconnect(client, 10000);				
-			}
-			
 			if ((res < 0) && verbose)
 			{
 				printf("DISPLAY UPDATE FIALED\n");
 			}
-
+			
 			if (verbose)
 			{
 				printf("The hour is: %02d, display code is %#.2x;%#.2x, result: %d \n",a_tm->tm_hour,adisp_refresh_values.disp_h1,adisp_refresh_values.disp_h2,res);
 				printf("The minute is: %02d, display code is %#.2x;%#.2x, result: %d \n",a_tm->tm_min,adisp_refresh_values.disp_min1,adisp_refresh_values.disp_min2,res);
 				printf("display dimming is set to %d, display memory to set: %#.2x, result: %d \n", adimming.currlight, adisp_refresh_values.disp_dim,res);
 			}
-
-			// sleep for 50 second using nanosleep() if this cycle is not the first run (randomly starting between 0..59 sec in a minute)
-			// changed from 55 to 50, as 5sec wait time came in for MQTT server
+			
+			//Do MQTT connect, publish and disconnect
+			//first check if the client is connected, if not then connect
+			if (light_sensor_available == 1)
+			{	
+				if (MQTTClient_isConnected(client) == 1)
+				{
+					MQTT_Connected = 1;
+					if (verbose)
+					{
+						printf("MQTT is connected\n");
+					}
+				}
+				else
+				{
+					MQTT_Connected = 0;
+					 if (MQTTClient_connect(client, &conn_opts) == MQTTCLIENT_SUCCESS)
+					 {
+						 MQTT_Connected = 1;
+						if (verbose)
+						{
+							printf("MQTT is reconnected\n");
+						}
+					 }
+				}
+				if (MQTT_Connected == 1)
+				{
+					snprintf(mqtt_payload,50,"{\"lux\": %f, \"dimming\": %i}", lux, adimming.currlight);
+					pubmsg.payload = mqtt_payload;
+					pubmsg.payloadlen = strlen(mqtt_payload);
+					pubmsg.qos = QOS;
+					pubmsg.retained = 1;
+					MQTTClient_publishMessage(client, TOPIC, &pubmsg, &token);
+					MQTTClient_waitForCompletion(client, token, 5000);
+				}
+			}
+			
+			// get sleep time
+			a_tm = localtime(&now);
+			int StopSleepBeforeSec = 58;
+			if (a_tm->tm_sec < StopSleepBeforeSec)
+			{
+				sleep_sec= StopSleepBeforeSec - a_tm->tm_sec;
+			}
+			else
+			{
+				sleep_sec= 1;
+			}
+			
 			if (dontwait == 0)
 			{
-				program_sleep(50,verbose);
+				program_sleep(sleep_sec,verbose);
 				// measure lux value after the long wait if communication with the sensor is OK
 				if (light_sensor_available == 1)
 				{
@@ -549,7 +583,7 @@ int main (int argc, char *argv[])
 					// if communication is not OK, disable usage of sensor
 					if (lux < 0)
 					{
-						light_sensor_available = 0;
+						lux = 0;
 					}
 				}
 				if (verbose)
@@ -587,7 +621,7 @@ int main (int argc, char *argv[])
 			break;
 		}
 		// sleep for 0.9 second using nanosleep (to ensure that the next minute change will be detected within 1 second)
-		program_sleep(0.9,verbose);
+		program_sleep(0.2,verbose);
 	}
 	// Turn off display
 	res = display_init(0, display_file_descriptor, verbose);
@@ -601,7 +635,8 @@ int main (int argc, char *argv[])
 	{
 		printf("SENSOR SHUTDOWN FAILED\n");
 	}
-	//Destroy MQTT
+	//Disconnect and Destroy MQTT
+	MQTTClient_disconnect(client, 10000);
 	MQTTClient_destroy(&client);
 	return 0;
 }
