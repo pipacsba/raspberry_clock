@@ -54,8 +54,12 @@ for cygwin:
 
 
 //Defines for MQTT
-//#define ADDRESS     "tcp://192.168.17.118:1883"
-#define ADDRESS     "tcp://10.58.193.203:1883"
+#ifndef noI2C
+	#define ADDRESS     "tcp://192.168.17.118:1883"
+#endif
+#ifdef noI2C
+	#define ADDRESS     "tcp://10.58.193.203:1883"
+#endif
 #define CLIENTID    "ExampleClientPub"
 #define TOPIC       "clock/light"
 #define QOS         0
@@ -684,7 +688,6 @@ int openI2C_bus(int adapter_nr,unsigned char address, int verbose)
 	#endif
 	return file;
 }
-
 
 /* FUNCTION: SENSOR_INIT
  sub-function is created to turn on and turn off the light sensor, the function also turn off interrupts
