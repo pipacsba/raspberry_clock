@@ -545,16 +545,16 @@ int main (int argc, char *argv[])
 					MQTT_Connected = 0;
 					 if (MQTTClient_connect(client, &conn_opts) == MQTTCLIENT_SUCCESS)
 					 {
-						 MQTT_Connected = 1;
+						 MQTT_Connected = 2;
 						if (verbose)
 						{
 							printf("MQTT is reconnected\n");
 						}
 					 }
 				}
-				if (MQTT_Connected == 1)
+				if (MQTT_Connected >= 1)
 				{
-					snprintf(mqtt_payload,50,"{\"lux\": %f, \"dimming\": %i}", lux, adimming.currlight);
+					snprintf(mqtt_payload,50,"{\"lux\": %.2f, \"dimming\": %i, \"mqtt\": %i}", lux, adimming.currlight, MQTT_Connected);
 					pubmsg.payload = mqtt_payload;
 					pubmsg.payloadlen = strlen(mqtt_payload);
 					pubmsg.qos = QOS;
