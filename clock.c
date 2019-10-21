@@ -1344,8 +1344,8 @@ float measure_lux(int file, int verbose)
 		if (gain != 16) 
 		{
 			// make conversion based on datasheet
-			f_broadband= broadband * 16;
-			f_ir = ir * 16;
+			f_broadband= (float)broadband * 16.0f;
+			f_ir = (float)ir * 16.0f;
 		}
 		// calculate lux from measured values
 		lux = calculate_lux(f_broadband, f_ir);
