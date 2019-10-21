@@ -237,12 +237,12 @@ float measure_lux(int file, int verbose);
 /* FUNCTION: CALCULATE_LUX
 this function calculates the lux value from the measured light sensor data
 Input:
-	int broadband: bradband sensor measured value
-	int ir: infrared sensor measured value
+	float broadband: bradband sensor measured value
+	float ir: infrared sensor measured value
 Output:
 	float lux	: the calculated lux value
 */
-float calculate_lux(int broadband, int ir);
+float calculate_lux(float broadband, float ir);
 
 // stuff for detecting keypress
 int getkey();
@@ -366,6 +366,8 @@ int main (int argc, char *argv[])
 			printf("Light sensor available\n");			
 		}
 	}
+	int light_sensor_dead = 0;
+	int light_sensor_dead_lim = 5;
 	
 	//set up MQTT
 	char mqtt_payload[50];
@@ -528,6 +530,17 @@ int main (int argc, char *argv[])
 				printf("display dimming is set to %d, display memory to set: %#.2x, result: %d \n", adimming.currlight, adisp_refresh_values.disp_dim,res);
 			}
 			
+			// if light sensor failure occured, than try restart the light sensor
+			if (light_sensor_dead == light_sensor_dead_lim)
+			{
+				res = sensor_init(0, sensor_file_descriptor, verbose);
+				if (res >= 0)
+				{
+					program_sleep(0.5,verbose);
+					res=sensor_init(1, sensor_file_descriptor, verbose);
+				}
+			}
+			
 			//Do MQTT connect, publish and disconnect
 			//first check if the client is connected, if not then connect
 			if (light_sensor_available == 1)
@@ -535,6 +548,10 @@ int main (int argc, char *argv[])
 				if (MQTTClient_isConnected(client) == 1)
 				{
 					MQTT_Connected = 1;
+					if (light_sensor_dead == light_sensor_dead_lim)
+					{
+						MQTT_Connected = 3; // tried to restart sensor
+					}
 					if (verbose)
 					{
 						printf("MQTT is connected\n");
@@ -554,7 +571,7 @@ int main (int argc, char *argv[])
 				}
 				if (MQTT_Connected >= 1)
 				{
-					snprintf(mqtt_payload,50,"{\"lux\": %.2f, \"dimming\": %i, \"mqtt\": %i}", lux, adimming.currlight, MQTT_Connected);
+					snprintf(mqtt_payload,55,"{\"lux\": %.5f, \"dimming\": %i, \"mqtt\": %i}", lux, adimming.currlight, MQTT_Connected);
 					pubmsg.payload = mqtt_payload;
 					pubmsg.payloadlen = strlen(mqtt_payload);
 					pubmsg.qos = QOS;
@@ -589,6 +606,19 @@ int main (int argc, char *argv[])
 					{
 						lux = 0;
 					}
+					if (lux < 0.01)
+					{
+						light_sensor_dead = light_sensor_dead + 1;
+						if (light_sensor_dead > light_sensor_dead_lim +1)
+						{
+							light_sensor_dead = light_sensor_dead_lim +1;
+						}
+					}
+					else
+					{
+						light_sensor_dead = 0;
+					}
+					
 				}
 				if (verbose)
 				{
@@ -1261,8 +1291,10 @@ float measure_lux(int file, int verbose)
 {
 	int res = 0;
 	float lux = 0.0;
-	int broadband = 0;
-	int ir = 0;
+	unsigned int broadband = 0;
+	unsigned int ir = 0;
+	float f_broadband = 0.0;
+	float f_ir = 0.0;
 	// set the gain value of the sensor if needed
 	int gain = 1;
 	// set the command values for the read
@@ -1312,11 +1344,11 @@ float measure_lux(int file, int verbose)
 		if (gain != 16) 
 		{
 			// make conversion based on datasheet
-			broadband= broadband << 4;
-			ir = ir << 4;
+			f_broadband= broadband * 16;
+			f_ir = ir * 16;
 		}
 		// calculate lux from measured values
-		lux = calculate_lux(broadband, ir);
+		lux = calculate_lux(f_broadband, f_ir);
 	}
 	
 	return lux;
@@ -1325,50 +1357,51 @@ float measure_lux(int file, int verbose)
 /* FUNCTION: CALCULATE_LUX
 this function calculates the lux value from the measured light sensor data
 Input:
-	int broadband: bradband sensor measured value
-	int ir: infrared sensor measured value
+	float broadband: bradband sensor measured value
+	float ir: infrared sensor measured value
 Output:
 	float lux	: the calculated lux value
 */
-float calculate_lux(int broadband, int ir)
+float calculate_lux(float broadband, float ir)
 {
-	// CS Package
-	// For 0 < CH1/CH0 <= 0.52 Lux = 0.0315 * CH0 - 0.0593 / CH0 * ((CH1/CH0)1.4)
-	// For 0.52 < CH1/CH0 <= 0.65 Lux = 0.0229 * CH0 - 0.0291 * CH1
-	// For 0.65 < CH1/CH0 <= 0.80 Lux = 0.0157 * CH0 - 0.0180 * CH1
-	// For 0.80 < CH1/CH0 <= 1.30 Lux = 0.00338 * CH0 - 0.00260 * CH1
+
+	// T, FN, and CL Package
+	// For 0 < CH1/CH0	< 0.50 Lux = 0.0304 * CH0 - 0.062 * CH0*((CH1/CH0)^1.4)
+	// For 0.50 < CH1/CH0 < 0.61 Lux = 0.0224 * CH0 - 0.031 * CH1
+	// For 0.61 < CH1/CH0 < 0.80 Lux = 0.0128 * CH0 - 0.0153 * CH1
+	// For 0.80 < CH1/CH0 < 1.30 Lux = 0.00146 * CH0 - 0.00112 * CH1
 	// For CH1/CH0 > 1.30 Lux = 0
 	float lux = 0.0;
-	unsigned long ratio = 0;
+	float ratio = 0;
 	// calculate ration with division of zero protection
 	if (broadband > 0) ratio = ir / broadband;
 	// make the necessary calculations based on the database
-	// For 0 < CH1/CH0 <= 0.52 Lux = 0.0315 * CH0 - 0.0593 / CH0 * ((CH1/CH0)1.4)
-	if (ratio <= 0.52)
+	// For 0 < CH1/CH0	< 0.50 Lux = 0.0304 * CH0 - 0.062 * CH0*((CH1/CH0)^1.4)
+	if (ratio <= 0.50)
 	{
-		lux = 0.0315 * broadband - 0.0593 / broadband * (pow(ratio,1.4));
+		lux = 0.0304 * broadband - 0.062 * broadband * (pow(ratio,1.4));
 	}
-	// For 0.52 < CH1/CH0 <= 0.65 Lux = 0.0229 * CH0 - 0.0291 * CH1
-	else if (ratio <= 0.65)
+	// For 0.50 < CH1/CH0 < 0.61 Lux = 0.0224 * CH0 - 0.031 * CH1
+	else if (ratio <= 0.61)
 	{
-		lux = 0.0229 * broadband - 0.0291 * ir;
+		lux = 0.0224 * broadband - 0.031 * ir;
 	}
-	// For 0.65 < CH1/CH0 <= 0.80 Lux = 0.0157 * CH0 - 0.0180 * CH1
+	// For 0.61 < CH1/CH0 < 0.80 Lux = 0.0128 * CH0 - 0.0153 * CH1
 	else if (ratio <= 0.8)
 	{
-		lux = 0.0157 * broadband - 0.0180 * ir;
+		lux = 0.0128 * broadband - 0.0153 * ir;
 	}
-	// For 0.80 < CH1/CH0 <= 1.30 Lux = 0.00338 * CH0 - 0.00260 * CH1
+	// For 0.80 < CH1/CH0 < 1.30 Lux = 0.00146 * CH0 - 0.00112 * CH1
 	else if  (ratio <= 1.3)
 	{
-		lux = 0.00338 * broadband - 0.00260 * ir;
+		lux = 0.00146 * broadband - 0.00112 * ir;
 	}
 	// For CH1/CH0 > 1.30 Lux = 0
 	else
 	{
-		lux = 0;
+		lux = 0.02;
 	}
-	// if a calculation wnet out of limits, than set the lux value to 0
+	// if a calculation went out of limits, than set the lux value to 0
 	if (isnan(lux))
 	{
 		lux = 0;
