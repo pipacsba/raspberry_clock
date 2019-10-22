@@ -539,6 +539,10 @@ int main (int argc, char *argv[])
 					program_sleep(0.5,verbose);
 					res=sensor_init(1, sensor_file_descriptor, verbose);
 				}
+				if (res < 0)
+				{
+					light_sensor_dead = 0;
+				}
 			}
 			
 			//Do MQTT connect, publish and disconnect
@@ -695,7 +699,10 @@ int openI2C_bus(int adapter_nr,unsigned char address, int verbose)
 		file = open(filename, O_RDWR);
 		// if fake I2C header is used, than file opening will fail
 		#ifdef I2C_INC_FAKE
-			file = 1;
+			if (file < 0)
+			{
+				file = -file;
+			}
 		#endif
 		if (file < 0)
 		{
@@ -1364,7 +1371,6 @@ Output:
 */
 float calculate_lux(float broadband, float ir)
 {
-
 	// T, FN, and CL Package
 	// For 0 < CH1/CH0	< 0.50 Lux = 0.0304 * CH0 - 0.062 * CH0*((CH1/CH0)^1.4)
 	// For 0.50 < CH1/CH0 < 0.61 Lux = 0.0224 * CH0 - 0.031 * CH1
@@ -1372,27 +1378,27 @@ float calculate_lux(float broadband, float ir)
 	// For 0.80 < CH1/CH0 < 1.30 Lux = 0.00146 * CH0 - 0.00112 * CH1
 	// For CH1/CH0 > 1.30 Lux = 0
 	float lux = 0.0;
-	float ratio = 0;
+	float ratio = 0.0;
 	// calculate ration with division of zero protection
-	if (broadband > 0) ratio = ir / broadband;
+	if (broadband > 0.0) ratio = ir / broadband;
 	// make the necessary calculations based on the database
 	// For 0 < CH1/CH0	< 0.50 Lux = 0.0304 * CH0 - 0.062 * CH0*((CH1/CH0)^1.4)
-	if (ratio <= 0.50)
+	if ((ratio <= 0.50) && (broadband > 0.0))
 	{
 		lux = 0.0304 * broadband - 0.062 * broadband * (pow(ratio,1.4));
 	}
 	// For 0.50 < CH1/CH0 < 0.61 Lux = 0.0224 * CH0 - 0.031 * CH1
-	else if (ratio <= 0.61)
+	else if ((ratio <= 0.61) && (broadband > 0.0))
 	{
 		lux = 0.0224 * broadband - 0.031 * ir;
 	}
 	// For 0.61 < CH1/CH0 < 0.80 Lux = 0.0128 * CH0 - 0.0153 * CH1
-	else if (ratio <= 0.8)
+	else if ((ratio <= 0.8) && (broadband > 0.0))
 	{
 		lux = 0.0128 * broadband - 0.0153 * ir;
 	}
 	// For 0.80 < CH1/CH0 < 1.30 Lux = 0.00146 * CH0 - 0.00112 * CH1
-	else if  (ratio <= 1.3)
+	else if ((ratio <= 1.3) && (broadband > 0.0))
 	{
 		lux = 0.00146 * broadband - 0.00112 * ir;
 	}
@@ -1404,9 +1410,12 @@ float calculate_lux(float broadband, float ir)
 	// if a calculation went out of limits, than set the lux value to 0
 	if (isnan(lux))
 	{
-		lux = 0;
+		lux = 0.02;
 	}
-	
+	else if (lux < 0.02)
+	{
+		lux = 0.02;
+	}
 	return lux;
 }
 
