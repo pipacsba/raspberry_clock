@@ -182,9 +182,12 @@ struct display_dimming update_dimming(struct tm *a_tm,struct display_dimming adi
 this function is responsible to modify the current dimming settings in function of the measured lux
 inputs:
  int lux							: measured lux value
+ struct display_dimming adimming	: including the previous dimming settings
+ int * lux_array					: look-up table for dimming vs lux
 output								: including the current dimming settings (with memory)
 */
-struct display_dimming update_dimming_by_lux(int lux, int * lux_array, int verbose);
+struct display_dimming update_dimming_by_lux(int lux, int * lux_array, struct display_dimming adimming, int verbose);
+
 
 /* FUNCTION: CALCULATE_SUN_UP
 To calculate the sun-set and sun-rise times for a given location, on the current day this function should be called
@@ -421,7 +424,7 @@ int main (int argc, char *argv[])
 	int amin=66;
 	
 	// define variable to store lux value
-	float lux = 0;
+	float lux = 0.0;
 
 	// Turn on display
 	res=display_init(1, display_file_descriptor, verbose);
@@ -511,7 +514,7 @@ int main (int argc, char *argv[])
 			else
 			{
 				// else based on the sensor reading
-				adimming=update_dimming_by_lux(lux, lux_values, verbose);
+				adimming=update_dimming_by_lux(lux, lux_values, adimming, verbose);
 			}
 			// define memory values for the display
 			adisp_refresh_values=get_displ_values(a_tm, adimming.currlight,verbose);
@@ -603,6 +606,7 @@ int main (int argc, char *argv[])
 				// measure lux value after the long wait if communication with the sensor is OK
 				if (light_sensor_available == 1)
 				{
+					
 					//some low-pass filtering on lux value ~4min (y += alpha * ( x - y ) )
 					lux = lux + (measure_lux(sensor_file_descriptor, verbose) - lux)/4;
 					// if communication is not OK, disable usage of sensor
@@ -1038,11 +1042,14 @@ struct display_dimming update_dimming(struct tm *a_tm,struct display_dimming adi
 this function is responsible to modify the current dimming settings in function of the measured lux
 inputs:
  int lux							: measured lux value
+ struct display_dimming adimming	: including the previous dimming settings
+ int * lux_array					: look-up table for dimming vs lux
 output								: including the current dimming settings (with memory)
 */
-struct display_dimming update_dimming_by_lux(int lux, int * lux_array, int verbose)
+struct display_dimming update_dimming_by_lux(int lux, int * lux_array, struct display_dimming adimming, int verbose)
 {
-	int adimming = 0;
+	int dimming = 0;
+	int hysteresis = 5; // [%]
 	// for each possible dimming value (starting from the lowest)
 	for (int i = 0; i <= MaxDimming; i++)
 	{
@@ -1052,7 +1059,17 @@ struct display_dimming update_dimming_by_lux(int lux, int * lux_array, int verbo
 		{
 			// than this is the required dimming value
 			// at the end the highest dimming is selected which fulfills the criteria above
-			adimming = i;
+			dimming = i;
+		}
+	}
+	// adding hysteresis for changing the dimming value
+	// if dimming increases
+	if (dimming > adimming.currlight)
+	{
+		// do not increase if the current light is below the hysteresis limit
+		if (lux < (lux_array[dimming] * (100 + hysteresis) / 100))
+		{
+			dimming = adimming.currlight;
 		}
 	}
 	if (verbose)
@@ -1067,7 +1084,7 @@ struct display_dimming update_dimming_by_lux(int lux, int * lux_array, int verbo
 	//		bdimming.dimming_min=0; */
 	struct display_dimming bdimming={0, 0, MaxDimming, 0};
 	// set the dimming value as found above
-	bdimming.currlight = adimming;
+	bdimming.currlight = dimming;
 	return bdimming;
 }
 
@@ -1424,6 +1441,9 @@ sub-function is created to read lux values for dimming from file
 	file name is stored in lux_file variable
 		the file shall contain lux dimming pairs in each row, both as integer values
 	input: pointer to the array to be filled
+the result will contain as many elements as MaxDimming, and 
+- for each defined dimming point the minimum lux level will be the contant
+- will contain 0 if the input file do not specify lux value for the dimming
 */
 void read_lux_values(int * lux_array, char * filepath)
 {
@@ -1459,7 +1479,6 @@ void read_lux_values(int * lux_array, char * filepath)
 		// close file
 		fclose(f);
 	}
-	
 }
 
 
