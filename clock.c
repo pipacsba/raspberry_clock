@@ -45,6 +45,7 @@ for cygwin:
 #ifndef noI2C
 	#include <sys/ioctl.h>
 	#include <linux/i2c-dev.h>
+	#include <i2c/smbus.h>
 	#define I2C_DEV_H_INCLUDED
 #endif
 #ifdef noI2C
@@ -68,6 +69,18 @@ for cygwin:
 //---------------------- END OF INCLUDES AND DEFINES -------------------------------
 
 //----------------------------STRUCTURE DEFINITIONS--------------------
+
+/* LIGHT SENSOR MEASUREMENT STRUCT
+create a structure to contain the measured sensor values and the calculated lux
+	s_ir : infrared value
+	s_broadband  : broadband value
+	lux: calculated lux value
+*/
+struct light_sensor_data
+{
+	int s_ir, s_broadband;
+	float lux;
+};
 
 /* DISPLAY MEMORY VALUES STRUCT
 create a structure to contain all the display memory values which needs refresh in every minute
@@ -228,14 +241,14 @@ Output:
 int get_UTC_correction(struct tm *a_tm);
 
 /* FUNCTION: MEASURE_LUX
-this function reads the light sensor signals and calculates the calculation into Lux
+this function converts the time-zone and summer time information to a single hour difference between UTC and the system time
 Input:
 	int file: file descriptor of the light sensor
 	verbose: puts information to the standard output
 Output:
-	float: lux value
+	struct light_sensor_data: measured data and calculated lux
 */
-float measure_lux(int file, int verbose);
+struct light_sensor_data measure_lux(int file, int verbose);
 
 /* FUNCTION: CALCULATE_LUX
 this function calculates the lux value from the measured light sensor data
@@ -373,7 +386,7 @@ int main (int argc, char *argv[])
 	int light_sensor_dead_lim = 5;
 	
 	//set up MQTT
-	char mqtt_payload[50];
+	char mqtt_payload[100];
 	int MQTT_Connected = 0;
 	MQTTClient client;
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
@@ -419,16 +432,21 @@ int main (int argc, char *argv[])
 
 	// define variable for I2C bus read/wrtie event results
 	int res=0;
+	int disp_status;
 
 	// create int to store previous time value, set it to a not a minute value (e.g. 66)
 	int amin=66;
 	
 	// define variable to store lux value
 	float lux = 0.0;
+	struct light_sensor_data ls_data;
+	ls_data.lux = 0.0;
+	ls_data.s_ir = 0;
+	ls_data.s_broadband = 0;
 
 	// Turn on display
-	res=display_init(1, display_file_descriptor, verbose);
-	if ((res < 0) && verbose)
+	disp_status=display_init(1, display_file_descriptor, verbose);
+	if ((disp_status < 0) && verbose)
 	{
 		printf("DISPLAY INIT FAILED\n");
 	}
@@ -520,8 +538,8 @@ int main (int argc, char *argv[])
 			adisp_refresh_values=get_displ_values(a_tm, adimming.currlight,verbose);
 
 			// Set display content and dimming
-			res= display_update(adisp_refresh_values, display_file_descriptor, verbose);
-			if ((res < 0) && verbose)
+			disp_status= display_update(adisp_refresh_values, display_file_descriptor, verbose);
+			if ((disp_status < 0) && verbose)
 			{
 				printf("DISPLAY UPDATE FIALED\n");
 			}
@@ -542,7 +560,11 @@ int main (int argc, char *argv[])
 					program_sleep(0.5,verbose);
 					res=sensor_init(1, sensor_file_descriptor, verbose);
 				}
-				if (res < 0)
+				if (res >= 0)
+				{
+					lux = 0.0;
+				}
+				else
 				{
 					light_sensor_dead = 0;
 				}
@@ -578,7 +600,8 @@ int main (int argc, char *argv[])
 				}
 				if (MQTT_Connected >= 1)
 				{
-					snprintf(mqtt_payload,55,"{\"lux\": %.5f, \"dimming\": %i, \"mqtt\": %i}", lux, adimming.currlight, MQTT_Connected);
+					snprintf(mqtt_payload,100,"{\"lux\": %.5f, \"dimming\": %i, \"mqtt\": %i, \"ir\": %i, \"broadband\": %i, \"disp_err\": %i}",
+						lux, adimming.currlight, MQTT_Connected, ls_data.s_ir, ls_data.s_broadband, disp_status);
 					pubmsg.payload = mqtt_payload;
 					pubmsg.payloadlen = strlen(mqtt_payload);
 					pubmsg.qos = QOS;
@@ -606,13 +629,13 @@ int main (int argc, char *argv[])
 				// measure lux value after the long wait if communication with the sensor is OK
 				if (light_sensor_available == 1)
 				{
-					
 					//some low-pass filtering on lux value ~4min (y += alpha * ( x - y ) )
-					lux = lux + (measure_lux(sensor_file_descriptor, verbose) - lux)/4;
+					ls_data = measure_lux(sensor_file_descriptor, verbose);
+					lux = lux + ((ls_data.lux - lux) / 4.0f);
 					// if communication is not OK, disable usage of sensor
-					if (lux < 0)
+					if (lux < 0.0)
 					{
-						lux = 0;
+						lux = 0.0;
 					}
 					if (lux < 0.01)
 					{
@@ -626,7 +649,6 @@ int main (int argc, char *argv[])
 					{
 						light_sensor_dead = 0;
 					}
-					
 				}
 				if (verbose)
 				{
@@ -1074,7 +1096,7 @@ struct display_dimming update_dimming_by_lux(int lux, int * lux_array, struct di
 	}
 	if (verbose)
 	{
-		printf("Look-up table dimming: %d, for lux %d\n", adimming, lux);
+		printf("Look-up table dimming: %d, for lux %d\n", dimming, lux);
 	}
 	
 	// Create dimming status structure, and fill it with initial val
@@ -1309,14 +1331,15 @@ Input:
 	int file: file descriptor of the light sensor
 	verbose: puts information to the standard output
 Output:
-	float	: measured lux value
+	struct light_sensor_data: measured data and calculated lux
 */
-float measure_lux(int file, int verbose)
+struct light_sensor_data measure_lux(int file, int verbose)
 {
+	struct light_sensor_data measurement;
 	int res = 0;
 	float lux = 0.0;
-	unsigned int broadband = 0;
-	unsigned int ir = 0;
+	int broadband = 0;
+	int ir = 0;
 	float f_broadband = 0.0;
 	float f_ir = 0.0;
 	// set the gain value of the sensor if needed
@@ -1345,37 +1368,34 @@ float measure_lux(int file, int verbose)
 	#ifdef I2C_DEV_H_INCLUDED
 		// Using SMBus commands
 		broadband = i2c_smbus_read_word_data(file, command_broadband);
-		if (broadband < 0)
-		{
-			// ERROR HANDLING: i2c transaction failed
-			lux=res;
-		}
 	#endif
 	// Read infrared sensor value
 	#ifdef I2C_DEV_H_INCLUDED
 		// Using SMBus commands
 		ir = i2c_smbus_read_word_data(file, command_ir);
-		if (ir < 0)
-		{
-			// ERROR HANDLING: i2c transaction failed
-			lux=res;
-		}
 	#endif	
-	// if lux is not 0, than something failed during the measurement
-	if (lux == 0)
+	// if ir/broadband is not 0, than something failed during the measurement
+	if ((ir >= 0) && (broadband >= 0))
 	{
 		// if gain is not 16, that means gain = 1
-		if (gain != 16) 
+		if (gain != 16)
 		{
-			// make conversion based on datasheet
-			f_broadband= (float)broadband * 16.0f;
-			f_ir = (float)ir * 16.0f;
+			// make conversion based on datasheet (the proposed calculation is for gain=16)
+			f_broadband= (float)broadband * 16.0;
+			f_ir = (float)ir * 16.0;
+		}
+		else
+		{
+			f_broadband= (float)broadband;
+			f_ir = (float)ir;
 		}
 		// calculate lux from measured values
 		lux = calculate_lux(f_broadband, f_ir);
 	}
-	
-	return lux;
+	measurement.s_ir = ir;
+	measurement.s_broadband = broadband;
+	measurement.lux = lux;
+	return measurement;
 }
 
 /* FUNCTION: CALCULATE_LUX
