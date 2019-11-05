@@ -241,7 +241,7 @@ Output:
 int get_UTC_correction(struct tm *a_tm);
 
 /* FUNCTION: MEASURE_LUX
-this function converts the time-zone and summer time information to a single hour difference between UTC and the system time
+this functional reads the light sensor measured data, and calls the lux calculation, than returns the calculated lux
 Input:
 	int file: file descriptor of the light sensor
 	verbose: puts information to the standard output
@@ -1326,7 +1326,7 @@ void program_sleep(float sec, int verbose)
 }
 
 /* FUNCTION: MEASURE_LUX
-this function converts the time-zone and summer time information to a single hour difference between UTC and the system time
+this functional reads the light sensor measured data, and calls the lux calculation, than returns the calculated lux
 Input:
 	int file: file descriptor of the light sensor
 	verbose: puts information to the standard output
@@ -1374,7 +1374,7 @@ struct light_sensor_data measure_lux(int file, int verbose)
 		// Using SMBus commands
 		ir = i2c_smbus_read_word_data(file, command_ir);
 	#endif	
-	// if ir/broadband is not 0, than something failed during the measurement
+	// if ir or broadband is negative than something failed during the measurement
 	if ((ir >= 0) && (broadband >= 0))
 	{
 		// if gain is not 16, that means gain = 1
