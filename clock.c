@@ -21,7 +21,7 @@ e.g.:
 	./clock 1 - output to standard output, but not to file
 	
 to compile:
-	 gcc -Wall clock.c -lpaho-mqtt3c -lm -li2c -o clock
+	 gcc -Wall -Ofast clock.c -lpaho-mqtt3c -lm -li2c -o clock
 	 
 for cygwin:
 	gcc -c  clock.c -g -O3 -D noI2C -DNDEBUG  -o .//clock.c.o -I. -I.
@@ -459,7 +459,7 @@ int main (int argc, char *argv[])
 	}
 	
 	// continous operation (while(1))
-	// done parameter can be changed by application kill signal
+	// done parameter can be changed by application kill signal for proper shutdown
 	while(!done)
 	{
 		// create variable where the time information will be stored [type: time_t]
@@ -532,7 +532,16 @@ int main (int argc, char *argv[])
 			else
 			{
 				// else based on the sensor reading
-				adimming=update_dimming_by_lux(lux, lux_values, adimming, verbose);
+				// if sensor reading OK
+				if ((ls_data.s_broadband >=0 ) && (ls_data.s_ir >= 0))
+				{
+					adimming=update_dimming_by_lux(lux, lux_values, adimming, verbose);
+				}
+				// else use substitute value
+				else
+				{
+					adimming.currlight= 3;
+				}
 			}
 			// define memory values for the display
 			adisp_refresh_values=get_displ_values(a_tm, adimming.currlight,verbose);
@@ -613,6 +622,7 @@ int main (int argc, char *argv[])
 			
 			// get sleep time
 			a_tm = localtime(&now);
+			// define max sleep (some delay will be caused by the light sensor measurement, but below 1 sec)
 			int StopSleepBeforeSec = 58;
 			if (a_tm->tm_sec < StopSleepBeforeSec)
 			{
@@ -623,6 +633,7 @@ int main (int argc, char *argv[])
 				sleep_sec= 1;
 			}
 			
+			//at the first minute do not wait, as we are out of synch
 			if (dontwait == 0)
 			{
 				program_sleep(sleep_sec,verbose);
@@ -631,13 +642,15 @@ int main (int argc, char *argv[])
 				{
 					//some low-pass filtering on lux value ~4min (y += alpha * ( x - y ) )
 					ls_data = measure_lux(sensor_file_descriptor, verbose);
-					lux = lux + ((ls_data.lux - lux) / 4.0f);
-					// if communication is not OK, disable usage of sensor
-					if (lux < 0.0)
+					if (ls_data.lux > 0.0)
+					{
+					    lux = lux + ((ls_data.lux - lux) / 4.0f);
+					}
+					else
 					{
 						lux = 0.0;
 					}
-					if (lux < 0.01)
+					if ((lux < 0.01) || (ls_data.s_ir < 0) || (ls_data.s_broadband < 0))
 					{
 						light_sensor_dead = light_sensor_dead + 1;
 						if (light_sensor_dead > light_sensor_dead_lim +1)
@@ -684,7 +697,7 @@ int main (int argc, char *argv[])
 			printf("key pressed: %c \n",key);
 			break;
 		}
-		// sleep for 0.9 second using nanosleep (to ensure that the next minute change will be detected within 1 second)
+		// sleep for a fracture of a second using nanosleep (to ensure that the next minute change will be detected at appx in this time-frame)
 		program_sleep(0.2,verbose);
 	}
 	// Turn off display
@@ -1353,6 +1366,7 @@ struct light_sensor_data measure_lux(int file, int verbose)
 	{
 		command_gain = Sensor_command + Sensor_Timing;
 		#ifdef I2C_DEV_H_INCLUDED
+		program_sleep(0.1,verbose);
 		res = i2c_smbus_write_byte_data(file, command_gain, 0x12);
 		if (res < 0)
 		{
@@ -1363,12 +1377,13 @@ struct light_sensor_data measure_lux(int file, int verbose)
 		program_sleep(0.402, verbose);
 		#endif
 	}
-		
+	program_sleep(0.1,verbose);
 	// Read Broadband sensor value
 	#ifdef I2C_DEV_H_INCLUDED
 		// Using SMBus commands
 		broadband = i2c_smbus_read_word_data(file, command_broadband);
 	#endif
+	program_sleep(0.1,verbose);
 	// Read infrared sensor value
 	#ifdef I2C_DEV_H_INCLUDED
 		// Using SMBus commands
