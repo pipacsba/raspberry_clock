@@ -162,13 +162,17 @@ sub-function is created to read lux values for dimming from file
 void read_lux_values(int * lux_array, char * filepath);
 
 /* FUNCTION: GET_DISPL_VALUES
-sub-function to update the display content
- inputs:
+sub-function create the hex values for the display settings
+ inputs: 
+	struct tm *a_tm					: including the current time
+	currlight						: the required dimming value
+	verbose							: if 1 some information will be sent to the standard output
+ output: struct 
 	displ_h1 - memory content of the first character of the hour
 	displ_h2 - memory content of the second character of the hour
 	disp_min1 - memory content of the first character of the minute
 	disp_min2 - memory content of the second character of the minute
- output: ---
+	disp_dim : dimming
 */
 struct disp_refresh_values get_displ_values(struct tm *a_tm,unsigned char currlight, int verbose);
 
@@ -176,9 +180,11 @@ struct disp_refresh_values get_displ_values(struct tm *a_tm,unsigned char currli
 this function send the defined values to the display device via the I2C bus
  inputs:
 	adisp_refresh_values	:	contains the register values of the display segments
+	file					:	bus handler
+	lightchange				:	if light settings needs to be updated (positive increase, negative decrease)
 	verbose					:	if 1 some information will be sent to the standard output
 */
-int display_update(struct disp_refresh_values adisp_refresh_values, int file, int verbose);
+int display_update(struct disp_refresh_values adisp_refresh_values, int file, int lightchange, int verbose);
 
 /* FUNCTION: UPDATE_DIMMING
 this function is responsible to modify the current dimming settings in function of the current time
@@ -414,8 +420,8 @@ int main (int argc, char *argv[])
 	//		adimming.currlight=0;
 	//		adimming.dimming_max=15;
 	//		adimming.dimming_min=0;
-	// used for sun-set based calculation
-	struct display_dimming adimming={0, 0, MaxDimming, 0};
+	// currlight is set to -1 to ensure that the starting value is really set
+	struct display_dimming adimming={0, -1, MaxDimming, 0};
 
 	// create structure variable for display refresh values
 	struct disp_refresh_values adisp_refresh_values;
@@ -543,11 +549,13 @@ int main (int argc, char *argv[])
 					adimming.currlight= 3;
 				}
 			}
+			
+			
 			// define memory values for the display
 			adisp_refresh_values=get_displ_values(a_tm, adimming.currlight,verbose);
 
 			// Set display content and dimming
-			disp_status= display_update(adisp_refresh_values, display_file_descriptor, verbose);
+			disp_status= display_update(adisp_refresh_values, display_file_descriptor, adimming.lightchange, verbose);
 			if ((disp_status < 0) && verbose)
 			{
 				printf("DISPLAY UPDATE FIALED\n");
@@ -557,7 +565,14 @@ int main (int argc, char *argv[])
 			{
 				printf("The hour is: %02d, display code is %#.2x;%#.2x, result: %d \n",a_tm->tm_hour,adisp_refresh_values.disp_h1,adisp_refresh_values.disp_h2,res);
 				printf("The minute is: %02d, display code is %#.2x;%#.2x, result: %d \n",a_tm->tm_min,adisp_refresh_values.disp_min1,adisp_refresh_values.disp_min2,res);
-				printf("display dimming is set to %d, display memory to set: %#.2x, result: %d \n", adimming.currlight, adisp_refresh_values.disp_dim,res);
+				if (adimming.lightchange != 0)
+				{
+					printf("Display dimming is set to %d, display memory to set: %#.2x, result: %d \n", adimming.currlight, adisp_refresh_values.disp_dim,res);
+				}
+				else
+				{
+					printf("Display dimming is unchanged, %d, display memory is %#.2x  \n", adimming.currlight, adisp_refresh_values.disp_dim);
+				}
 			}
 			
 			// if light sensor failure occured, than try restart the light sensor
@@ -592,7 +607,7 @@ int main (int argc, char *argv[])
 					}
 					if (verbose)
 					{
-						printf("MQTT is connected\n");
+						printf("MQTT connection is alive\n");
 					}
 				}
 				else
@@ -603,7 +618,7 @@ int main (int argc, char *argv[])
 						 MQTT_Connected = 2;
 						if (verbose)
 						{
-							printf("MQTT is reconnected\n");
+							printf("MQTT connection was not alive, connected\n");
 						}
 					 }
 				}
@@ -931,16 +946,15 @@ struct disp_refresh_values get_displ_values(struct tm *a_tm, unsigned char currl
 	return adisp_refresh_values;
 }
 
-/* FUNTION: DISPLAY_UPDATE
-sub-function to update the display content
+/* FUNCTION: DISPLAY_UPDATE
+this function send the defined values to the display device via the I2C bus
  inputs:
-	displ_h1 - memory content of the first character of the hour
-	displ_h2 - memory content of the second character of the hour
-	disp_min1 - memory content of the first character of the minute
-	disp_min2 - memory content of the second character of the minute
- output: ---
+	adisp_refresh_values	:	contains the register values of the display segments
+	file					:	bus handler
+	lightchange				:	if light settings needs to be updated (positive increase, negative decrease)
+	verbose					:	if 1 some information will be sent to the standard output
 */
-int display_update(struct disp_refresh_values adisp_refresh_values, int file, int verbose)
+int display_update(struct disp_refresh_values adisp_refresh_values, int file, int lightchange, int verbose)
 {
 	#ifdef I2C_DEV_H_INCLUDED
 		int res = 0;
@@ -989,12 +1003,16 @@ int display_update(struct disp_refresh_values adisp_refresh_values, int file, in
 
 	//dimming
 	#ifdef I2C_DEV_H_INCLUDED
-		// Using SMBus commands
-		res = i2c_smbus_read_byte_data(file, adisp_refresh_values.disp_dim);
-		if (res < 0)
+		// only perform if dimming needs to be changed
+		if (lightchange != 0)
 		{
-			// ERROR HANDLING: i2c transaction failed
-			ares=res;
+			// Using SMBus commands
+			res = i2c_smbus_read_byte_data(file, adisp_refresh_values.disp_dim);
+			if (res < 0)
+			{
+				// ERROR HANDLING: i2c transaction failed
+				ares=res;
+			}
 		}
 	#endif
 	return ares;
@@ -1085,6 +1103,7 @@ struct display_dimming update_dimming_by_lux(int lux, int * lux_array, struct di
 {
 	int dimming = 0;
 	int hysteresis = 5; // [%]
+	int lightchange = 0; //positive increasing, negative decreasing
 	// for each possible dimming value (starting from the lowest)
 	for (int i = 0; i <= MaxDimming; i++)
 	{
@@ -1107,6 +1126,14 @@ struct display_dimming update_dimming_by_lux(int lux, int * lux_array, struct di
 			dimming = adimming.currlight;
 		}
 	}
+	if (dimming > adimming.currlight)
+	{
+		lightchange = 1;
+	}
+	else if (dimming < adimming.currlight)
+	{
+		lightchange = -1;
+	}
 	if (verbose)
 	{
 		printf("Look-up table dimming: %d, for lux %d\n", dimming, lux);
@@ -1120,6 +1147,7 @@ struct display_dimming update_dimming_by_lux(int lux, int * lux_array, struct di
 	struct display_dimming bdimming={0, 0, MaxDimming, 0};
 	// set the dimming value as found above
 	bdimming.currlight = dimming;
+	bdimming.lightchange = lightchange;
 	return bdimming;
 }
 
