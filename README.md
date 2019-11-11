@@ -2,7 +2,7 @@
 Driver for a 4x7 segment display clock (ht16K33v110) with optional light sensor (TSL2561)
 
 This clock.c is driving a 4x7 segment display (ht16K33v110) to display the time.
-The dimming is set based on a light sensor value from TSL2561 (CS package!). If no light sensor available the dimming is done by calulated sun-set and sun-down.
+The dimming is set based on a light sensor value from TSL2561 (T package!). If no light sensor available the dimming is done by calulated sun-set and sun-down.
 The display and the light sensor are connected to a raspberry pi 2 I2C outputs.
 
 Inputs to call:
