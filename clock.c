@@ -51,10 +51,10 @@ for cygwin:
 
 //Defines for MQTT
 #ifndef noI2C
-    #define ADDRESS     "tcp://192.168.17.118:1883"
+    #define ADDRESS     "tcp://xxx.xxx.xxx.xxx:xxxx"
 #endif
 #ifdef noI2C
-    #define ADDRESS     "tcp://10.58.193.203:1883"
+    #define ADDRESS     "tcp://xx.xx.xx.xx:xxxx"
 #endif
 #define CLIENTID    "ExampleClientPub"
 #define TOPIC       "clock/light"
